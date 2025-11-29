@@ -1,0 +1,13 @@
+{
+  "photos": [
+    {
+      "filename": "1764444330631-4o2o7s.png",
+      "name": "Bob the BuildR"
+    }
+  ],
+  "gameState": {
+    "started": false,
+    "currentIndex": 0,
+    "shuffledOrder": []
+  }
+}
