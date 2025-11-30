@@ -1,0 +1,15 @@
+{
+  "photos": [
+    {
+      "url": "https://rylnsvz3x6sf1hnt.public.blob.vercel-storage.com/BTARWV/1764445335485-4hfkpb-WPxnleFEW3I88LDmI4DJTmc09b8Ocx.png",
+      "name": "john"
+    }
+  ],
+  "gameState": {
+    "started": true,
+    "currentIndex": 1,
+    "shuffledOrder": [
+      0
+    ]
+  }
+}

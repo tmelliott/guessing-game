@@ -26,9 +26,14 @@ export function generateGameCode(): string {
   return code;
 }
 
+// Generate a random host token
+export function generateHostToken(): string {
+  return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+}
+
 // Read games metadata
-async function readGamesMeta(): Promise<
-  Record<string, { topic: string; createdAt: number }>
+export async function readGamesMeta(): Promise<
+  Record<string, { topic: string; createdAt: number; hostToken: string }>
 > {
   await ensureDirectories();
   try {
@@ -41,16 +46,17 @@ async function readGamesMeta(): Promise<
 
 // Write games metadata
 async function writeGamesMeta(
-  meta: Record<string, { topic: string; createdAt: number }>
+  meta: Record<string, { topic: string; createdAt: number; hostToken: string }>
 ) {
   await ensureDirectories();
   await writeFile(GAMES_META_FILE, JSON.stringify(meta, null, 2), "utf-8");
 }
 
 // Create a new game
-export async function createGame(topic: string): Promise<string> {
+export async function createGame(topic: string): Promise<{ code: string; hostToken: string }> {
   await ensureDirectories();
   const code = generateGameCode();
+  const hostToken = generateHostToken();
   const meta = await readGamesMeta();
   const gameDataFile = join(GAMES_DIR, `${code}.json`);
 
@@ -70,18 +76,25 @@ export async function createGame(topic: string): Promise<string> {
   meta[code] = {
     topic,
     createdAt: Date.now(),
+    hostToken,
   };
   await writeGamesMeta(meta);
 
-  return code;
+  return { code, hostToken };
 }
 
 // Get game metadata
 export async function getGameMeta(
   code: string
-): Promise<{ topic: string; createdAt: number } | null> {
+): Promise<{ topic: string; createdAt: number; hostToken: string } | null> {
   const meta = await readGamesMeta();
   return meta[code] || null;
+}
+
+// Verify host token
+export async function verifyHostToken(code: string, token: string): Promise<boolean> {
+  const meta = await getGameMeta(code);
+  return meta?.hostToken === token;
 }
 
 // Get game data file path

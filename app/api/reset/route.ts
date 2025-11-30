@@ -20,13 +20,16 @@ export async function POST(request: NextRequest) {
 
     // Delete all uploaded photos from Vercel Blob Storage
     try {
-      const data = await readGameData(code);
-      // Delete all blob URLs for this game
-      for (const photo of data.photos) {
-        try {
-          await del(photo.url);
-        } catch (error) {
-          console.error(`Error deleting blob ${photo.url}:`, error);
+      const token = process.env.GG_READ_WRITE_TOKEN;
+      if (token) {
+        const data = await readGameData(code);
+        // Delete all blob URLs for this game
+        for (const photo of data.photos) {
+          try {
+            await del(photo.url, { token });
+          } catch (error) {
+            console.error(`Error deleting blob ${photo.url}:`, error);
+          }
         }
       }
     } catch (error) {

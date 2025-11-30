@@ -1,0 +1,8 @@
+{
+  "photos": [],
+  "gameState": {
+    "started": false,
+    "currentIndex": 0,
+    "shuffledOrder": []
+  }
+}

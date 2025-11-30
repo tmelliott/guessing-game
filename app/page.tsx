@@ -41,8 +41,8 @@ export default function Home() {
       const data = await response.json();
 
       if (response.ok) {
-        // Navigate to join page with the code
-        router.push(`/join/${data.code}`);
+        // Navigate to host page with the code and token
+        router.push(`/host/${data.code}?token=${data.hostToken}`);
       } else {
         setMessage({
           type: "error",

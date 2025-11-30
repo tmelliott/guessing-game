@@ -29,13 +29,13 @@ Open [http://localhost:3000](http://localhost:3000) with your browser to see the
 
 ### Environment Variables
 
-For Vercel Blob Storage to work, you need to set up the `BLOB_READ_WRITE_TOKEN` environment variable:
+For Vercel Blob Storage to work, you need to set up the `GG_READ_WRITE_TOKEN` environment variable:
 
 1. **On Vercel**: Go to your project settings → Environment Variables
-2. **Add**: `BLOB_READ_WRITE_TOKEN` with your token from [Vercel Blob Dashboard](https://vercel.com/dashboard/stores)
+2. **Add**: `GG_READ_WRITE_TOKEN` with your token from [Vercel Blob Dashboard](https://vercel.com/dashboard/stores)
 3. **For local development**: Create a `.env.local` file:
    ```
-   BLOB_READ_WRITE_TOKEN=your_token_here
+   GG_READ_WRITE_TOKEN=your_token_here
    ```
 
 ### Installing Dependencies
