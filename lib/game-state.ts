@@ -263,4 +263,3 @@ function cleanupOldGames(): void {
 export function deleteGame(code: string): void {
   games.delete(code);
 }
-
