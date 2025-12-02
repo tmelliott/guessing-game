@@ -656,6 +656,10 @@ document.addEventListener("DOMContentLoaded", () => {
     ws.send(JSON.stringify({ type: "host-new-question" }));
   });
 
+  document.getElementById("new-question-from-responses-btn").addEventListener("click", () => {
+    ws.send(JSON.stringify({ type: "host-new-question" }));
+  });
+
   // Fullscreen guessing controls
   document
     .getElementById("fullscreen-reveal-btn")
