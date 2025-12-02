@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Guessing Game</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <!-- Landing Page -->
+    <div id="landing-page" class="page active">
+        <div class="container">
+            <h1>Guessing Game</h1>
+            <div class="landing-actions">
+                <div class="code-input-section">
+                    <input
+                        type="text"
+                        id="game-code-input"
+                        placeholder="Enter 5-digit code"
+                        maxlength="5"
+                        pattern="[0-9]{5}"
+                    >
+                    <button id="join-btn" class="btn btn-primary">Join Game</button>
+                </div>
+                <div class="divider">
+                    <span>OR</span>
+                </div>
+                <button id="host-btn" class="btn btn-secondary">Host Game</button>
+            </div>
+            <div id="landing-error" class="error-message"></div>
+        </div>
+    </div>
+
+    <!-- Guest Name Input -->
+    <div id="guest-name-page" class="page">
+        <div class="container">
+            <h2>Enter Your Name</h2>
+            <input
+                type="text"
+                id="guest-name-input"
+                placeholder="Your name"
+                maxlength="50"
+            >
+            <button id="submit-name-btn" class="btn btn-primary">Continue</button>
+            <div id="name-error" class="error-message"></div>
+        </div>
+    </div>
+
+    <!-- Guest Waiting/Answer Page -->
+    <div id="guest-page" class="page">
+        <div class="container">
+            <div class="guest-info-section">
+                <h2 id="guest-name-display">Guest</h2>
+                <div id="guest-connection-status" class="connection-status">
+                    <span class="status-indicator connected"></span>
+                    <span>Connected</span>
+                </div>
+            </div>
+            <h2 id="guest-status">Waiting for question...</h2>
+            <div id="guest-question-section" class="hidden">
+                <div class="question-box">
+                    <p id="guest-question-text"></p>
+                    <p class="response-type-label" id="guest-response-type"></p>
+                </div>
+                <div id="guest-answer-section">
+                    <textarea
+                        id="guest-text-answer"
+                        class="answer-input hidden"
+                        placeholder="Your answer..."
+                        rows="4"
+                    ></textarea>
+                    <input
+                        type="number"
+                        id="guest-numeric-answer"
+                        class="answer-input hidden"
+                        placeholder="Your answer..."
+                    >
+                    <div id="guest-image-answer" class="answer-input hidden">
+                        <input type="file" id="guest-image-file" accept="image/*">
+                        <div id="guest-image-preview" class="image-preview"></div>
+                    </div>
+                    <button id="submit-answer-btn" class="btn btn-primary">Submit Answer</button>
+                </div>
+                <div id="guest-answer-status" class="status-message"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Host Page -->
+    <div id="host-page" class="page">
+        <div class="container">
+            <h2>Host Game</h2>
+            <div class="game-code-display">
+                <p>Game Code:</p>
+                <h1 id="host-game-code">-----</h1>
+                <p class="code-instructions">Share this code with your guests</p>
+            </div>
+
+            <div class="guests-list-section">
+                <h3>Connected Guests (<span id="guest-count">0</span>)</h3>
+                <ul id="guests-list"></ul>
+            </div>
+
+            <div class="question-section">
+                <h3>Ask a Question</h3>
+                <textarea
+                    id="host-question-input"
+                    placeholder="Enter your question..."
+                    rows="3"
+                ></textarea>
+                <div class="response-type-selector">
+                    <label>
+                        <input type="radio" name="response-type" value="text" checked>
+                        Text
+                    </label>
+                    <label>
+                        <input type="radio" name="response-type" value="numeric">
+                        Numeric
+                    </label>
+                    <label>
+                        <input type="radio" name="response-type" value="image">
+                        Image
+                    </label>
+                </div>
+                <button id="send-question-btn" class="btn btn-primary">Send Question</button>
+            </div>
+
+            <div id="host-responses-section" class="hidden">
+                <h3>Responses (<span id="response-count">0</span>/<span id="total-guests-count">0</span>)</h3>
+                <div id="responses-status" class="status-message"></div>
+                <button id="start-guessing-btn" class="btn btn-primary hidden">Start Guessing</button>
+            </div>
+
+            <div id="guessing-section" class="hidden">
+                <h3>Guessing Game</h3>
+                <div class="response-display-box">
+                    <div id="current-response-display"></div>
+                    <div id="response-info" class="response-info">
+                        <button id="reveal-answer-btn" class="btn btn-secondary">Reveal Answer</button>
+                    </div>
+                </div>
+                <div id="response-counter" class="response-counter"></div>
+                <div class="guessing-controls">
+                    <button id="next-response-btn" class="btn btn-primary hidden">Next Response</button>
+                    <button id="new-question-btn" class="btn btn-secondary hidden">New Question</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Full-Screen Guessing View -->
+    <div id="fullscreen-guessing" class="page fullscreen-view hidden">
+        <div class="fullscreen-container">
+            <div class="fullscreen-response-display">
+                <div id="fullscreen-response-text"></div>
+                <div id="fullscreen-response-image"></div>
+                <div id="fullscreen-response-info" class="fullscreen-info"></div>
+            </div>
+            <div class="fullscreen-controls">
+                <div id="fullscreen-response-counter" class="fullscreen-info"></div>
+                <div class="button-row">
+                    <button id="fullscreen-reveal-btn" class="btn btn-secondary btn-large hidden">Reveal Answer</button>
+                    <button id="fullscreen-new-question-btn" class="btn btn-secondary btn-large hidden">New Question</button>
+                </div>
+                <div class="button-row">
+                    <button id="fullscreen-next-btn" class="btn btn-primary btn-large hidden">Next Response</button>
+                    <button id="fullscreen-back-btn" class="btn btn-secondary btn-large">Back to Admin</button>
+                </div>
+            </div>
+        </div>
+    </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
