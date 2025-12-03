@@ -24,8 +24,59 @@ const server = http.createServer(app);
 // Serve static files
 app.use(express.static("public"));
 
-// Store active games: gameCode -> { host: ws, guests: Map<ws, {name, id}> }
+// Store active games: gameCode -> {
+//   host: ws,
+//   guests: Map<ws, guestId>,  // Active connections: WebSocket -> guestId
+//   allGuests: Map<guestId, {name, id, token, connected, hasAnswered}>  // All guests by ID
+// }
 const games = new Map();
+
+// Store guest tokens: token -> { gameCode, guestId }
+const guestTokens = new Map();
+
+// Store host tokens: token -> { gameCode }
+const hostTokens = new Map();
+
+// TEMPORARY: API endpoint to list all active games (for debugging)
+// Defined after games Map is initialized
+app.get("/api/games", (req, res) => {
+  console.log("API /api/games endpoint called"); // Debug log
+  try {
+    const gamesList = Array.from(games.entries()).map(([code, game]) => {
+      const connectedGuests = Array.from(game.guests.values()).length;
+      const totalGuests = game.allGuests.size;
+      const guestsList = Array.from(game.allGuests.values()).map((g) => ({
+        name: g.name,
+        id: g.id,
+        connected: g.connected,
+        hasAnswered: g.hasAnswered,
+      }));
+
+      return {
+        gameCode: code,
+        hasHost: game.host && game.host.readyState === WebSocket.OPEN,
+        connectedGuests: connectedGuests,
+        totalGuests: totalGuests,
+        guests: guestsList,
+        hasCurrentQuestion: game.currentQuestion !== null,
+        guessingStarted: game.guessingStarted,
+        responseCount: game.responses.length,
+      };
+    });
+
+    res.setHeader("Content-Type", "application/json");
+    res.json({
+      totalGames: gamesList.length,
+      games: gamesList,
+    });
+  } catch (error) {
+    console.error("Error in /api/games:", error);
+    res.status(500).json({
+      error: "Internal server error",
+      message: error.message,
+    });
+  }
+});
 
 // Generate a random 5-digit code
 function generateGameCode() {
@@ -34,6 +85,16 @@ function generateGameCode() {
     code = Math.floor(10000 + Math.random() * 90000).toString();
   } while (games.has(code));
   return code;
+}
+
+// Generate a unique token for guests
+function generateGuestToken() {
+  return `token-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+}
+
+// Generate a unique token for hosts
+function generateHostToken() {
+  return `host-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 }
 
 // WebSocket server
@@ -55,23 +116,119 @@ wss.on("connection", (ws) => {
       const data = JSON.parse(message.toString());
 
       if (data.type === "host-create") {
-        // Host creating a new game
+        // Check if reconnecting with a token
+        let hostToken = data.token;
+        let isReconnect = false;
+        let existingGameCode = null;
+
+        if (hostToken && hostTokens.has(hostToken)) {
+          const tokenData = hostTokens.get(hostToken);
+          existingGameCode = tokenData.gameCode;
+          const existingGame = games.get(existingGameCode);
+
+          if (existingGame) {
+            // Reconnecting to existing game
+            isReconnect = true;
+            gameCode = existingGameCode;
+            isHost = true;
+            // Update host WebSocket
+            existingGame.host = ws;
+
+            ws.send(
+              JSON.stringify({
+                type: "game-created",
+                gameCode: gameCode,
+                token: hostToken,
+                isReconnect: true,
+              })
+            );
+
+            // Send current game state
+            if (existingGame.currentQuestion && !existingGame.guessingStarted) {
+              // Game has an active question - host should see responses
+              ws.send(
+                JSON.stringify({
+                  type: "question-sent",
+                  questionId: existingGame.currentQuestion.questionId,
+                })
+              );
+            }
+
+            // Send current guest list
+            const allGuests = Array.from(existingGame.allGuests.values()).map(
+              (g) => ({
+                name: g.name,
+                id: g.id,
+                connected: g.connected,
+                hasAnswered: g.hasAnswered,
+              })
+            );
+
+            allGuests.forEach((guest) => {
+              ws.send(
+                JSON.stringify({
+                  type: "guest-joined",
+                  guest: guest,
+                  totalGuests: existingGame.allGuests.size,
+                  allGuests: allGuests,
+                })
+              );
+            });
+
+            // Send response status if there are responses
+            if (existingGame.responses.length > 0) {
+              const connectedCount = Array.from(
+                existingGame.allGuests.values()
+              ).filter((g) => g.connected).length;
+              ws.send(
+                JSON.stringify({
+                  type: "guest-answered",
+                  totalResponses: existingGame.responses.length,
+                  totalGuests: existingGame.allGuests.size,
+                  connectedGuests: connectedCount,
+                  allAnswered: existingGame.responses.length === connectedCount,
+                  allGuests: allGuests,
+                })
+              );
+            }
+
+            return;
+          }
+        }
+
+        // Creating a new game
         gameCode = generateGameCode();
         isHost = true;
+
+        // Generate new token if not reconnecting
+        if (!hostToken) {
+          hostToken = generateHostToken();
+        }
+
         games.set(gameCode, {
           host: ws,
-          guests: new Map(),
+          hostToken: hostToken,
+          guests: new Map(), // WebSocket -> guestId
+          allGuests: new Map(), // guestId -> {name, id, token, connected, hasAnswered}
           questions: [],
           currentQuestion: null,
           responses: [],
           shuffledResponses: [],
           currentResponseIndex: -1,
+          guessingStarted: false,
+        });
+
+        // Store host token mapping
+        hostTokens.set(hostToken, {
+          gameCode: gameCode,
         });
 
         ws.send(
           JSON.stringify({
             type: "game-created",
             gameCode: gameCode,
+            token: hostToken,
+            isReconnect: false,
           })
         );
       } else if (data.type === "guest-join") {
@@ -99,11 +256,63 @@ wss.on("connection", (ws) => {
           return;
         }
 
-        guestId = data.guestId || `guest-${Date.now()}-${Math.random()}`;
-        game.guests.set(ws, {
-          name: data.name || "Guest",
-          id: guestId,
-          hasAnswered: false,
+        // Check if reconnecting with a token
+        let guestToken = data.token;
+        let existingGuest = null;
+        let isReconnect = false;
+
+        if (guestToken && guestTokens.has(guestToken)) {
+          const tokenData = guestTokens.get(guestToken);
+          if (tokenData.gameCode === gameCode) {
+            guestId = tokenData.guestId;
+            // Find existing guest data (might be disconnected)
+            if (game.allGuests.has(guestId)) {
+              existingGuest = game.allGuests.get(guestId);
+              // Remove old WebSocket connection if exists
+              for (const [
+                existingWs,
+                existingGuestId,
+              ] of game.guests.entries()) {
+                if (existingGuestId === guestId) {
+                  game.guests.delete(existingWs);
+                  break;
+                }
+              }
+              isReconnect = true;
+            }
+          }
+        }
+
+        // Generate new token if not reconnecting
+        if (!guestToken) {
+          guestToken = generateGuestToken();
+        }
+
+        // Create or restore guest data
+        if (existingGuest) {
+          guestId = existingGuest.id;
+          // Update guest data
+          existingGuest.connected = true;
+          existingGuest.token = guestToken;
+          game.allGuests.set(guestId, existingGuest);
+        } else {
+          guestId = data.guestId || `guest-${Date.now()}-${Math.random()}`;
+          game.allGuests.set(guestId, {
+            name: data.name || "Guest",
+            id: guestId,
+            token: guestToken,
+            hasAnswered: false,
+            connected: true,
+          });
+        }
+
+        // Map WebSocket to guestId
+        game.guests.set(ws, guestId);
+
+        // Store token mapping
+        guestTokens.set(guestToken, {
+          gameCode: gameCode,
+          guestId: guestId,
         });
 
         ws.send(
@@ -111,19 +320,41 @@ wss.on("connection", (ws) => {
             type: "joined",
             gameCode: gameCode,
             guestId: guestId,
+            token: guestToken,
+            isReconnect: isReconnect,
           })
         );
 
+        // Send current question if one exists and guessing hasn't started
+        if (game.currentQuestion && !game.guessingStarted) {
+          ws.send(
+            JSON.stringify({
+              type: "question",
+              question: game.currentQuestion.question,
+              responseType: game.currentQuestion.responseType || "text",
+              questionId: game.currentQuestion.questionId,
+            })
+          );
+        }
+
         // Notify host
         if (game.host && game.host.readyState === WebSocket.OPEN) {
+          const guest = game.allGuests.get(guestId);
           game.host.send(
             JSON.stringify({
-              type: "guest-joined",
+              type: isReconnect ? "guest-reconnected" : "guest-joined",
               guest: {
-                name: game.guests.get(ws).name,
+                name: guest.name,
                 id: guestId,
+                connected: true,
               },
-              totalGuests: game.guests.size,
+              totalGuests: game.allGuests.size,
+              allGuests: Array.from(game.allGuests.values()).map((g) => ({
+                name: g.name,
+                id: g.id,
+                connected: g.connected,
+                hasAnswered: g.hasAnswered,
+              })),
             })
           );
         }
@@ -131,27 +362,36 @@ wss.on("connection", (ws) => {
         // Guest providing their name
         const game = games.get(gameCode);
         if (game && game.guests.has(ws)) {
-          const guest = game.guests.get(ws);
-          guest.name = data.name;
+          const guestId = game.guests.get(ws);
+          const guest = game.allGuests.get(guestId);
+          if (guest) {
+            guest.name = data.name;
 
-          ws.send(
-            JSON.stringify({
-              type: "name-accepted",
-              name: data.name,
-            })
-          );
-
-          // Notify host
-          if (game.host && game.host.readyState === WebSocket.OPEN) {
-            game.host.send(
+            ws.send(
               JSON.stringify({
-                type: "guest-name-updated",
-                guest: {
-                  name: data.name,
-                  id: guest.id,
-                },
+                type: "name-accepted",
+                name: data.name,
               })
             );
+
+            // Notify host
+            if (game.host && game.host.readyState === WebSocket.OPEN) {
+              game.host.send(
+                JSON.stringify({
+                  type: "guest-name-updated",
+                  guest: {
+                    name: data.name,
+                    id: guestId,
+                  },
+                  allGuests: Array.from(game.allGuests.values()).map((g) => ({
+                    name: g.name,
+                    id: g.id,
+                    connected: g.connected,
+                    hasAnswered: g.hasAnswered,
+                  })),
+                })
+              );
+            }
           }
         }
       } else if (data.type === "host-question") {
@@ -165,14 +405,14 @@ wss.on("connection", (ws) => {
           };
 
           // Reset all guest answer states
-          game.guests.forEach((guest) => {
+          game.allGuests.forEach((guest) => {
             guest.hasAnswered = false;
           });
 
           game.responses = [];
 
-          // Broadcast question to all guests
-          game.guests.forEach((guest, guestWs) => {
+          // Broadcast question to all connected guests
+          game.guests.forEach((guestId, guestWs) => {
             if (guestWs.readyState === WebSocket.OPEN) {
               guestWs.send(
                 JSON.stringify({
@@ -196,7 +436,21 @@ wss.on("connection", (ws) => {
         // Guest submitting an answer
         const game = games.get(gameCode);
         if (game && game.guests.has(ws)) {
-          const guest = game.guests.get(ws);
+          const guestId = game.guests.get(ws);
+          const guest = game.allGuests.get(guestId);
+          if (!guest) return;
+
+          // Check if guessing has started - prevent new answers
+          if (game.guessingStarted) {
+            ws.send(
+              JSON.stringify({
+                type: "answer-error",
+                message:
+                  "Guessing has already started. No new answers can be submitted.",
+              })
+            );
+            return;
+          }
 
           if (guest.hasAnswered) {
             ws.send(
@@ -227,6 +481,11 @@ wss.on("connection", (ws) => {
             })
           );
 
+          // Count connected guests for "all answered" check
+          const connectedGuestsCount = Array.from(
+            game.allGuests.values()
+          ).filter((g) => g.connected).length;
+
           // Notify host
           if (game.host && game.host.readyState === WebSocket.OPEN) {
             game.host.send(
@@ -237,8 +496,15 @@ wss.on("connection", (ws) => {
                   id: guest.id,
                 },
                 totalResponses: game.responses.length,
-                totalGuests: game.guests.size,
-                allAnswered: game.responses.length === game.guests.size,
+                totalGuests: game.allGuests.size,
+                connectedGuests: connectedGuestsCount,
+                allAnswered: game.responses.length === connectedGuestsCount,
+                allGuests: Array.from(game.allGuests.values()).map((g) => ({
+                  name: g.name,
+                  id: g.id,
+                  connected: g.connected,
+                  hasAnswered: g.hasAnswered,
+                })),
               })
             );
           }
@@ -247,11 +513,25 @@ wss.on("connection", (ws) => {
         // Host starting the guessing phase
         const game = games.get(gameCode);
         if (game && isHost && game.host === ws) {
+          // Mark guessing as started
+          game.guessingStarted = true;
+
           // Shuffle responses
           game.shuffledResponses = [...game.responses].sort(
             () => Math.random() - 0.5
           );
           game.currentResponseIndex = 0;
+
+          // Notify all connected guests that guessing has started (stop accepting answers)
+          game.guests.forEach((guestId, guestWs) => {
+            if (guestWs.readyState === WebSocket.OPEN) {
+              guestWs.send(
+                JSON.stringify({
+                  type: "guessing-started",
+                })
+              );
+            }
+          });
 
           // Show first response
           if (game.shuffledResponses.length > 0) {
@@ -262,6 +542,9 @@ wss.on("connection", (ws) => {
               JSON.stringify({
                 type: "response-display",
                 response: firstResponse,
+                question: game.currentQuestion
+                  ? game.currentQuestion.question
+                  : null,
                 index: 0,
                 total: game.shuffledResponses.length,
               })
@@ -284,6 +567,9 @@ wss.on("connection", (ws) => {
               JSON.stringify({
                 type: "response-display",
                 response: response,
+                question: game.currentQuestion
+                  ? game.currentQuestion.question
+                  : null,
                 index: game.currentResponseIndex,
                 total: game.shuffledResponses.length,
               })
@@ -324,6 +610,18 @@ wss.on("connection", (ws) => {
           game.responses = [];
           game.shuffledResponses = [];
           game.currentResponseIndex = -1;
+          game.guessingStarted = false;
+
+          // Notify all connected guests to show waiting screen
+          game.guests.forEach((guestId, guestWs) => {
+            if (guestWs.readyState === WebSocket.OPEN) {
+              guestWs.send(
+                JSON.stringify({
+                  type: "waiting-for-question",
+                })
+              );
+            }
+          });
 
           ws.send(
             JSON.stringify({
@@ -348,27 +646,45 @@ wss.on("connection", (ws) => {
     allClients.delete(ws);
 
     if (isHost && gameCode) {
-      // Host disconnected - remove game
-      games.delete(gameCode);
+      // Host disconnected - mark as disconnected but keep game (host can reconnect)
+      const game = games.get(gameCode);
+      if (game) {
+        // Don't delete the game, just mark host as disconnected
+        // The game will persist until host reconnects or manually deletes it
+        game.host = null;
+      }
     } else if (gameCode) {
-      // Guest disconnected
+      // Guest disconnected - mark as disconnected but keep in game
       const game = games.get(gameCode);
       if (game && game.guests.has(ws)) {
-        const guest = game.guests.get(ws);
+        const guestId = game.guests.get(ws);
         game.guests.delete(ws);
 
-        // Notify host
-        if (game.host && game.host.readyState === WebSocket.OPEN) {
-          game.host.send(
-            JSON.stringify({
-              type: "guest-left",
-              guest: {
-                name: guest.name,
-                id: guest.id,
-              },
-              totalGuests: game.guests.size,
-            })
-          );
+        // Mark guest as disconnected in allGuests
+        const guest = game.allGuests.get(guestId);
+        if (guest) {
+          guest.connected = false;
+
+          // Notify host
+          if (game.host && game.host.readyState === WebSocket.OPEN) {
+            game.host.send(
+              JSON.stringify({
+                type: "guest-disconnected",
+                guest: {
+                  name: guest.name,
+                  id: guestId,
+                  connected: false,
+                },
+                totalGuests: game.allGuests.size,
+                allGuests: Array.from(game.allGuests.values()).map((g) => ({
+                  name: g.name,
+                  id: g.id,
+                  connected: g.connected,
+                  hasAnswered: g.hasAnswered,
+                })),
+              })
+            );
+          }
         }
       }
     }

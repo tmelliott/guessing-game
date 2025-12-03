@@ -11,6 +11,14 @@
     <div id="landing-page" class="page active">
         <div class="container">
             <h1>Guessing Game</h1>
+
+            <!-- TEMPORARY: Active Games List -->
+            <div id="active-games-section" class="active-games-section" style="margin-bottom: 20px; padding: 15px; background: #f8f9fa; border-radius: 10px; border: 2px dashed #ccc;">
+                <h3 style="margin-bottom: 10px; font-size: 1em; color: #666;">Active Games (Temporary Debug View)</h3>
+                <button id="refresh-games-btn" class="btn btn-secondary" style="font-size: 0.9em; padding: 6px 12px; margin-bottom: 10px;">Refresh List</button>
+                <div id="active-games-list" style="max-height: 200px; overflow-y: auto; font-size: 0.85em;"></div>
+            </div>
+
             <div class="landing-actions">
                 <div class="code-input-section">
                     <input
@@ -152,21 +160,20 @@
     <!-- Full-Screen Guessing View -->
     <div id="fullscreen-guessing" class="page fullscreen-view hidden">
         <div class="fullscreen-container">
-            <div class="fullscreen-response-display">
-                <div id="fullscreen-response-text"></div>
-                <div id="fullscreen-response-image"></div>
-                <div id="fullscreen-response-info" class="fullscreen-info"></div>
+            <div class="fullscreen-content">
+                <div id="fullscreen-question" class="fullscreen-question"></div>
+                <div id="fullscreen-response-counter" class="fullscreen-counter"></div>
+                <div class="fullscreen-answer-container">
+                    <div id="fullscreen-response-text" class="fullscreen-answer-text"></div>
+                    <div id="fullscreen-response-image" class="fullscreen-answer-image"></div>
+                    <div id="fullscreen-response-author" class="fullscreen-answer-author"></div>
+                </div>
             </div>
             <div class="fullscreen-controls">
-                <div id="fullscreen-response-counter" class="fullscreen-info"></div>
-                <div class="button-row">
-                    <button id="fullscreen-reveal-btn" class="btn btn-secondary btn-large hidden">Reveal Answer</button>
-                    <button id="fullscreen-new-question-btn" class="btn btn-secondary btn-large hidden">New Question</button>
-                </div>
-                <div class="button-row">
-                    <button id="fullscreen-next-btn" class="btn btn-primary btn-large hidden">Next Response</button>
-                    <button id="fullscreen-back-btn" class="btn btn-secondary btn-large">Back to Admin</button>
-                </div>
+                <button id="fullscreen-reveal-btn" class="btn btn-secondary btn-large hidden">Reveal</button>
+                <button id="fullscreen-next-btn" class="btn btn-primary btn-large hidden">Next</button>
+                <button id="fullscreen-new-question-btn" class="btn btn-secondary btn-large hidden">New Question</button>
+                <button id="fullscreen-back-btn" class="btn btn-secondary btn-large">Back</button>
             </div>
         </div>
     </div>
