@@ -37,47 +37,6 @@ const guestTokens = new Map();
 // Store host tokens: token -> { gameCode }
 const hostTokens = new Map();
 
-// TEMPORARY: API endpoint to list all active games (for debugging)
-// Defined after games Map is initialized
-app.get("/api/games", (req, res) => {
-  console.log("API /api/games endpoint called"); // Debug log
-  try {
-    const gamesList = Array.from(games.entries()).map(([code, game]) => {
-      const connectedGuests = Array.from(game.guests.values()).length;
-      const totalGuests = game.allGuests.size;
-      const guestsList = Array.from(game.allGuests.values()).map((g) => ({
-        name: g.name,
-        id: g.id,
-        connected: g.connected,
-        hasAnswered: g.hasAnswered,
-      }));
-
-      return {
-        gameCode: code,
-        hasHost: game.host && game.host.readyState === WebSocket.OPEN,
-        connectedGuests: connectedGuests,
-        totalGuests: totalGuests,
-        guests: guestsList,
-        hasCurrentQuestion: game.currentQuestion !== null,
-        guessingStarted: game.guessingStarted,
-        responseCount: game.responses.length,
-      };
-    });
-
-    res.setHeader("Content-Type", "application/json");
-    res.json({
-      totalGames: gamesList.length,
-      games: gamesList,
-    });
-  } catch (error) {
-    console.error("Error in /api/games:", error);
-    res.status(500).json({
-      error: "Internal server error",
-      message: error.message,
-    });
-  }
-});
-
 // Generate a random 5-digit code
 function generateGameCode() {
   let code;

@@ -33,14 +33,6 @@ function showPage(pageId) {
     }
   }
   currentPage = pageId;
-
-  // TEMPORARY: Refresh games list when landing page is shown
-  if (pageId === "landing-page") {
-    const refreshGamesBtn = document.getElementById("refresh-games-btn");
-    if (refreshGamesBtn) {
-      refreshActiveGamesList();
-    }
-  }
 }
 
 // Error display
@@ -71,18 +63,39 @@ function connectWebSocket() {
 
   ws.onerror = (error) => {
     console.error("WebSocket error:", error);
-    showError("landing-error", "Connection error. Please try again.");
     updateGuestConnectionStatus(false);
+    // If we're on a page other than landing and connection fails, redirect
+    if (currentPage !== "landing-page") {
+      showError("landing-error", "Connection error. Redirecting to home...");
+      setTimeout(() => {
+        redirectToLanding();
+      }, 2000);
+    } else {
+      showError("landing-error", "Connection error. Please try again.");
+    }
   };
 
   ws.onclose = () => {
     console.log("WebSocket disconnected");
     updateGuestConnectionStatus(false);
-    // Attempt to reconnect after a delay (only for guests with token)
-    if (!isHost && guestToken && gameCode) {
+    // Only attempt to reconnect if we have valid tokens and are already in a game
+    // Don't reconnect if we're on landing page or if connection failed during initial connection
+    if (currentPage !== "landing-page" && !isHost && guestToken && gameCode) {
       setTimeout(() => {
         if (ws.readyState === WebSocket.CLOSED) {
           reconnectAsGuest();
+        }
+      }, 3000);
+    } else if (
+      currentPage !== "landing-page" &&
+      isHost &&
+      hostToken &&
+      gameCode
+    ) {
+      // Host reconnection attempt
+      setTimeout(() => {
+        if (ws.readyState === WebSocket.CLOSED) {
+          createOrReconnectHost();
         }
       }, 3000);
     }
@@ -112,7 +125,24 @@ function handleWebSocketMessage(data) {
       break;
 
     case "join-error":
+      // Connection failed - redirect to landing page and clear saved state
       showError("landing-error", data.message);
+      // Clear saved game state
+      localStorage.removeItem("guestGameCode");
+      localStorage.removeItem("guestId");
+      localStorage.removeItem("guestToken");
+      localStorage.removeItem("hostGameCode");
+      localStorage.removeItem("hostToken");
+      // Clear URL parameters
+      window.history.replaceState({}, "", "/");
+      // Reset state
+      gameCode = null;
+      guestId = null;
+      guestToken = null;
+      hostToken = null;
+      isHost = false;
+      // Show landing page
+      showPage("landing-page");
       break;
 
     case "joined":
@@ -836,16 +866,6 @@ document.addEventListener("DOMContentLoaded", () => {
       showPage("host-page");
     });
 
-  // TEMPORARY: Active games list functionality
-  const refreshGamesBtn = document.getElementById("refresh-games-btn");
-  if (refreshGamesBtn) {
-    refreshGamesBtn.addEventListener("click", refreshActiveGamesList);
-    // Load games list on page load
-    refreshActiveGamesList();
-    // Auto-refresh every 5 seconds
-    setInterval(refreshActiveGamesList, 5000);
-  }
-
   // Initialize WebSocket connection
   connectWebSocket();
 
@@ -960,6 +980,9 @@ function joinGame(code) {
             token: savedToken,
           })
         );
+      } else {
+        // Connection failed - redirect to landing
+        redirectToLanding();
       }
     }, 100);
   } else {
@@ -972,6 +995,25 @@ function joinGame(code) {
       })
     );
   }
+}
+
+function redirectToLanding() {
+  // Clear all saved state
+  localStorage.removeItem("guestGameCode");
+  localStorage.removeItem("guestId");
+  localStorage.removeItem("guestToken");
+  localStorage.removeItem("hostGameCode");
+  localStorage.removeItem("hostToken");
+  // Clear URL parameters
+  window.history.replaceState({}, "", "/");
+  // Reset state
+  gameCode = null;
+  guestId = null;
+  guestToken = null;
+  hostToken = null;
+  isHost = false;
+  // Show landing page
+  showPage("landing-page");
 }
 
 function reconnectAsGuest() {
@@ -992,8 +1034,14 @@ function reconnectAsGuest() {
             token: savedToken,
           })
         );
+      } else {
+        // Connection failed - redirect to landing
+        redirectToLanding();
       }
     }, 100);
+  } else {
+    // No saved state - redirect to landing
+    redirectToLanding();
   }
 }
 
@@ -1012,6 +1060,9 @@ function createOrReconnectHost() {
             gameCode: savedGameCode,
           })
         );
+      } else {
+        // Connection failed - redirect to landing
+        redirectToLanding();
       }
     }, 100);
   } else {
@@ -1023,164 +1074,4 @@ function createOrReconnectHost() {
       })
     );
   }
-}
-
-// TEMPORARY: Function to fetch and display active games
-function refreshActiveGamesList() {
-  const gamesListEl = document.getElementById("active-games-list");
-  if (!gamesListEl) return;
-
-  fetch("/api/games")
-    .then((res) => {
-      if (!res.ok) {
-        throw new Error(`HTTP error! status: ${res.status}`);
-      }
-      const contentType = res.headers.get("content-type");
-      if (!contentType || !contentType.includes("application/json")) {
-        return res.text().then((text) => {
-          throw new Error(
-            `Expected JSON but got: ${contentType}. Response: ${text.substring(
-              0,
-              100
-            )}`
-          );
-        });
-      }
-      return res.json();
-    })
-    .then((data) => {
-      if (!data || !data.games) {
-        gamesListEl.innerHTML =
-          "<p style='color: #999;'>Invalid response format</p>";
-        return;
-      }
-
-      if (data.games.length === 0) {
-        gamesListEl.innerHTML = "<p style='color: #999;'>No active games</p>";
-        return;
-      }
-
-      let html = `<div style='margin-bottom: 8px;'><strong>Total: ${data.totalGames} game(s)</strong></div>`;
-      data.games.forEach((game) => {
-        const connectedCount = game.guests.filter((g) => g.connected).length;
-        const disconnectedCount = game.totalGuests - connectedCount;
-        const isCurrentGame = game.gameCode === gameCode;
-        const savedHostToken = localStorage.getItem("hostToken");
-        const savedHostGameCode = localStorage.getItem("hostGameCode");
-        const isMyHostGame =
-          savedHostToken && savedHostGameCode === game.gameCode;
-
-        html += `
-          <div class="clickable-game-item" data-game-code="${
-            game.gameCode
-          }" data-is-host="${isMyHostGame}" style='margin-bottom: 12px; padding: 10px; background: white; border-radius: 5px; border-left: 4px solid ${
-          game.hasHost ? "#27ae60" : "#e74c3c"
-        }; cursor: pointer; transition: background-color 0.2s;' onmouseover="this.style.backgroundColor='#f0f0f0'" onmouseout="this.style.backgroundColor='white'">
-            <div style='font-weight: bold; margin-bottom: 5px;'>
-              Game: <span style='font-family: monospace; font-size: 1.1em;'>${
-                game.gameCode
-              }</span>
-              ${
-                isCurrentGame
-                  ? '<span style="color: #27ae60;">(Current)</span>'
-                  : '<span style="color: #5568d3; font-size: 0.85em; margin-left: 8px;">Click to join →</span>'
-              }
-            </div>
-            <div style='font-size: 0.9em; color: #666;'>
-              Host: ${game.hasHost ? "✓ Connected" : "✗ Disconnected"}<br>
-              Guests: ${connectedCount} connected, ${disconnectedCount} disconnected (${
-          game.totalGuests
-        } total)<br>
-              ${
-                game.hasCurrentQuestion
-                  ? `Question: Active (${game.responseCount} responses)`
-                  : "Question: None"
-              }<br>
-              ${
-                game.guessingStarted
-                  ? "Status: Guessing in progress"
-                  : "Status: Waiting"
-              }
-            </div>
-            ${
-              game.guests && game.guests.length > 0
-                ? `
-              <details style='margin-top: 5px; font-size: 0.85em;'>
-                <summary style='cursor: pointer; color: #5568d3;'>View guests (${
-                  game.guests.length
-                })</summary>
-                <ul style='margin-top: 5px; padding-left: 20px;'>
-                  ${game.guests
-                    .map(
-                      (g) => `
-                    <li style='margin: 3px 0;'>
-                      ${g.name || "Guest"} (${
-                        g.id ? g.id.substring(0, 8) + "..." : "N/A"
-                      })
-                      ${
-                        g.connected
-                          ? '<span style="color: #27ae60;">●</span>'
-                          : '<span style="color: #e74c3c;">○</span>'
-                      }
-                      ${
-                        g.hasAnswered
-                          ? '<span style="color: #28a745;">✓</span>'
-                          : ""
-                      }
-                    </li>
-                  `
-                    )
-                    .join("")}
-                </ul>
-              </details>
-            `
-                : ""
-            }
-          </div>
-        `;
-      });
-
-      gamesListEl.innerHTML = html;
-
-      // Add click handlers to game items
-      gamesListEl.querySelectorAll(".clickable-game-item").forEach((item) => {
-        item.addEventListener("click", (e) => {
-          // Don't trigger if clicking on details/summary or inside details
-          if (e.target.closest("details") || e.target.tagName === "SUMMARY") {
-            return;
-          }
-
-          const gameCodeToJoin = item.getAttribute("data-game-code");
-          const isHostGame = item.getAttribute("data-is-host") === "true";
-
-          if (gameCodeToJoin === gameCode) {
-            // Already connected to this game
-            return;
-          }
-
-          if (isHostGame) {
-            // Reconnect as host
-            const savedHostToken = localStorage.getItem("hostToken");
-            if (savedHostToken) {
-              createOrReconnectHost();
-            }
-          } else {
-            // Join as guest - fill in code and join
-            const gameCodeInput = document.getElementById("game-code-input");
-            if (gameCodeInput) {
-              gameCodeInput.value = gameCodeToJoin;
-              // Trigger join
-              joinGame(gameCodeToJoin);
-            } else {
-              // If input doesn't exist yet, just join directly
-              joinGame(gameCodeToJoin);
-            }
-          }
-        });
-      });
-    })
-    .catch((err) => {
-      console.error("Error loading games:", err);
-      gamesListEl.innerHTML = `<p style='color: #e74c3c;'>Error loading games: ${err.message}</p>`;
-    });
 }
