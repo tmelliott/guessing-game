@@ -80,89 +80,121 @@ wss.on("connection", (ws) => {
         let isReconnect = false;
         let existingGameCode = null;
 
-        if (hostToken && hostTokens.has(hostToken)) {
-          const tokenData = hostTokens.get(hostToken);
-          existingGameCode = tokenData.gameCode;
-          const existingGame = games.get(existingGameCode);
+        if (hostToken) {
+          // Token provided - check if it exists
+          if (hostTokens.has(hostToken)) {
+            const tokenData = hostTokens.get(hostToken);
+            existingGameCode = tokenData.gameCode;
+            const existingGame = games.get(existingGameCode);
 
-          if (existingGame) {
-            // Reconnecting to existing game
-            isReconnect = true;
-            gameCode = existingGameCode;
-            isHost = true;
-            // Update host WebSocket
-            existingGame.host = ws;
+            if (existingGame) {
+              // Reconnecting to existing game
+              isReconnect = true;
+              gameCode = existingGameCode;
+              isHost = true;
+              // Update host WebSocket
+              existingGame.host = ws;
 
+              ws.send(
+                JSON.stringify({
+                  type: "game-created",
+                  gameCode: gameCode,
+                  token: hostToken,
+                  isReconnect: true,
+                })
+              );
+
+              // Send current game state
+              if (
+                existingGame.currentQuestion &&
+                !existingGame.guessingStarted
+              ) {
+                // Game has an active question - host should see responses
+                ws.send(
+                  JSON.stringify({
+                    type: "question-sent",
+                    questionId: existingGame.currentQuestion.questionId,
+                  })
+                );
+              }
+
+              // Send current guest list
+              const allGuests = Array.from(existingGame.allGuests.values()).map(
+                (g) => ({
+                  name: g.name,
+                  id: g.id,
+                  connected: g.connected,
+                  hasAnswered: g.hasAnswered,
+                })
+              );
+
+              allGuests.forEach((guest) => {
+                ws.send(
+                  JSON.stringify({
+                    type: "guest-joined",
+                    guest: guest,
+                    totalGuests: existingGame.allGuests.size,
+                    allGuests: allGuests,
+                  })
+                );
+              });
+
+              // Send response status if there are responses
+              if (existingGame.responses.length > 0) {
+                const connectedCount = Array.from(
+                  existingGame.allGuests.values()
+                ).filter((g) => g.connected).length;
+
+                // Get list of guest IDs who have answered
+                const answeredGuestIds = existingGame.responses.map(
+                  (r) => r.guestId
+                );
+
+                ws.send(
+                  JSON.stringify({
+                    type: "guest-answered",
+                    totalResponses: existingGame.responses.length,
+                    totalGuests: existingGame.allGuests.size,
+                    connectedGuests: connectedCount,
+                    allAnswered:
+                      existingGame.responses.length === connectedCount,
+                    allGuests: allGuests,
+                    answeredGuestIds: answeredGuestIds, // Send list of who has answered
+                  })
+                );
+              }
+
+              return;
+            } else {
+              // Token exists but game doesn't - invalid token, send error
+              ws.send(
+                JSON.stringify({
+                  type: "join-error",
+                  message: "Game not found. The game may have ended.",
+                })
+              );
+              // Remove invalid token
+              hostTokens.delete(hostToken);
+              return;
+            }
+          } else {
+            // Token provided but doesn't exist (e.g., server restarted) - send error
             ws.send(
               JSON.stringify({
-                type: "game-created",
-                gameCode: gameCode,
-                token: hostToken,
-                isReconnect: true,
+                type: "join-error",
+                message: "Game not found. The game may have ended.",
               })
             );
-
-            // Send current game state
-            if (existingGame.currentQuestion && !existingGame.guessingStarted) {
-              // Game has an active question - host should see responses
-              ws.send(
-                JSON.stringify({
-                  type: "question-sent",
-                  questionId: existingGame.currentQuestion.questionId,
-                })
-              );
-            }
-
-            // Send current guest list
-            const allGuests = Array.from(existingGame.allGuests.values()).map(
-              (g) => ({
-                name: g.name,
-                id: g.id,
-                connected: g.connected,
-                hasAnswered: g.hasAnswered,
-              })
-            );
-
-            allGuests.forEach((guest) => {
-              ws.send(
-                JSON.stringify({
-                  type: "guest-joined",
-                  guest: guest,
-                  totalGuests: existingGame.allGuests.size,
-                  allGuests: allGuests,
-                })
-              );
-            });
-
-            // Send response status if there are responses
-            if (existingGame.responses.length > 0) {
-              const connectedCount = Array.from(
-                existingGame.allGuests.values()
-              ).filter((g) => g.connected).length;
-              ws.send(
-                JSON.stringify({
-                  type: "guest-answered",
-                  totalResponses: existingGame.responses.length,
-                  totalGuests: existingGame.allGuests.size,
-                  connectedGuests: connectedCount,
-                  allAnswered: existingGame.responses.length === connectedCount,
-                  allGuests: allGuests,
-                })
-              );
-            }
-
             return;
           }
         }
 
-        // Creating a new game
+        // Creating a new game (no token provided)
         gameCode = generateGameCode();
         isHost = true;
 
-        // Generate new token if not reconnecting
-        if (!hostToken) {
-          hostToken = generateHostToken();
-        }
+        // Generate new token
+        hostToken = generateHostToken();
 
         games.set(gameCode, {
           host: ws,
@@ -220,41 +252,72 @@ wss.on("connection", (ws) => {
         let existingGuest = null;
         let isReconnect = false;
 
-        if (guestToken && guestTokens.has(guestToken)) {
-          const tokenData = guestTokens.get(guestToken);
-          if (tokenData.gameCode === gameCode) {
-            guestId = tokenData.guestId;
-            // Find existing guest data (might be disconnected)
-            if (game.allGuests.has(guestId)) {
-              existingGuest = game.allGuests.get(guestId);
-              // Remove old WebSocket connection if exists
-              for (const [
-                existingWs,
-                existingGuestId,
-              ] of game.guests.entries()) {
-                if (existingGuestId === guestId) {
-                  game.guests.delete(existingWs);
-                  break;
+        if (guestToken) {
+          // Token provided - check if it exists
+          if (guestTokens.has(guestToken)) {
+            const tokenData = guestTokens.get(guestToken);
+            if (tokenData.gameCode === gameCode) {
+              guestId = tokenData.guestId;
+              // Find existing guest data (might be disconnected)
+              if (game.allGuests.has(guestId)) {
+                existingGuest = game.allGuests.get(guestId);
+                // Remove old WebSocket connection if exists
+                for (const [
+                  existingWs,
+                  existingGuestId,
+                ] of game.guests.entries()) {
+                  if (existingGuestId === guestId) {
+                    game.guests.delete(existingWs);
+                    break;
+                  }
                 }
+                isReconnect = true;
+                // Preserve the original token - don't generate a new one
+                guestToken = existingGuest.token || guestToken;
               }
-              isReconnect = true;
+            } else {
+              // Token exists but for different game - invalid, send error
+              ws.send(
+                JSON.stringify({
+                  type: "join-error",
+                  message: "Game not found. The game may have ended.",
+                })
+              );
+              return;
             }
+          } else {
+            // Token provided but doesn't exist (e.g., server restarted) - send error
+            ws.send(
+              JSON.stringify({
+                type: "join-error",
+                message: "Game not found. The game may have ended.",
+              })
+            );
+            return;
           }
         }
 
-        // Generate new token if not reconnecting
-        if (!guestToken) {
+        // Generate new token ONLY if this is a new guest (not reconnecting)
+        if (!isReconnect && !guestToken) {
           guestToken = generateGuestToken();
         }
 
         // Create or restore guest data
         if (existingGuest) {
           guestId = existingGuest.id;
-          // Update guest data
+          // Update guest data - preserve existing name and token
           existingGuest.connected = true;
-          existingGuest.token = guestToken;
+          // Only update token if it's different (shouldn't happen, but safety check)
+          if (existingGuest.token && existingGuest.token !== guestToken) {
+            // Update token mapping if token changed
+            guestTokens.delete(existingGuest.token);
+            existingGuest.token = guestToken;
+          } else if (!existingGuest.token) {
+            existingGuest.token = guestToken;
+          }
           game.allGuests.set(guestId, existingGuest);
         } else {
+          // New guest - create new entry
           guestId = data.guestId || `guest-${Date.now()}-${Math.random()}`;
           game.allGuests.set(guestId, {
             name: data.name || "Guest",
@@ -286,12 +349,17 @@ wss.on("connection", (ws) => {
 
         // Send current question if one exists and guessing hasn't started
         if (game.currentQuestion && !game.guessingStarted) {
+          // Check if guest has already answered this question
+          const guest = game.allGuests.get(guestId);
+          const hasAnswered = guest ? guest.hasAnswered : false;
+
           ws.send(
             JSON.stringify({
               type: "question",
               question: game.currentQuestion.question,
               responseType: game.currentQuestion.responseType || "text",
               questionId: game.currentQuestion.questionId,
+              hasAnswered: hasAnswered,
             })
           );
         }
@@ -373,12 +441,16 @@ wss.on("connection", (ws) => {
           // Broadcast question to all connected guests
           game.guests.forEach((guestId, guestWs) => {
             if (guestWs.readyState === WebSocket.OPEN) {
+              const guest = game.allGuests.get(guestId);
+              const hasAnswered = guest ? guest.hasAnswered : false;
+
               guestWs.send(
                 JSON.stringify({
                   type: "question",
                   question: data.question,
                   responseType: data.responseType || "text",
                   questionId: game.currentQuestion.questionId,
+                  hasAnswered: hasAnswered,
                 })
               );
             }
@@ -475,10 +547,15 @@ wss.on("connection", (ws) => {
           // Mark guessing as started
           game.guessingStarted = true;
 
-          // Shuffle responses
-          game.shuffledResponses = [...game.responses].sort(
-            () => Math.random() - 0.5
-          );
+          // Shuffle responses using Fisher-Yates algorithm for true randomization
+          game.shuffledResponses = [...game.responses];
+          for (let i = game.shuffledResponses.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [game.shuffledResponses[i], game.shuffledResponses[j]] = [
+              game.shuffledResponses[j],
+              game.shuffledResponses[i],
+            ];
+          }
           game.currentResponseIndex = 0;
 
           // Notify all connected guests that guessing has started (stop accepting answers)
@@ -511,7 +588,7 @@ wss.on("connection", (ws) => {
           }
         }
       } else if (data.type === "host-next-response") {
-        // Host moving to next response
+        // Host moving to next response (after revealing)
         const game = games.get(gameCode);
         if (game && isHost && game.host === ws) {
           game.currentResponseIndex++;
@@ -540,6 +617,34 @@ wss.on("connection", (ws) => {
               })
             );
           }
+        }
+      } else if (data.type === "host-skip-response") {
+        // Host skipping to next response without revealing
+        const game = games.get(gameCode);
+        if (game && isHost && game.host === ws) {
+          game.currentResponseIndex++;
+
+          // Loop back to first if we've reached the end
+          if (game.currentResponseIndex >= game.shuffledResponses.length) {
+            game.currentResponseIndex = 0;
+          }
+
+          const response = {
+            ...game.shuffledResponses[game.currentResponseIndex],
+          };
+          delete response.guestName; // Hide the name initially
+
+          ws.send(
+            JSON.stringify({
+              type: "response-display",
+              response: response,
+              question: game.currentQuestion
+                ? game.currentQuestion.question
+                : null,
+              index: game.currentResponseIndex,
+              total: game.shuffledResponses.length,
+            })
+          );
         }
       } else if (data.type === "host-reveal-answer") {
         // Host revealing who submitted the current response
@@ -587,6 +692,149 @@ wss.on("connection", (ws) => {
               type: "ready-for-question",
             })
           );
+        }
+      } else if (data.type === "leave") {
+        // User wants to leave the game
+        if (isHost && gameCode) {
+          // Host leaving - remove the entire game
+          const game = games.get(gameCode);
+          if (game) {
+            // Remove all guest tokens for this game
+            game.allGuests.forEach((guest) => {
+              if (guest.token) {
+                guestTokens.delete(guest.token);
+              }
+            });
+
+            // Remove host token
+            if (game.hostToken) {
+              hostTokens.delete(game.hostToken);
+            }
+
+            // Notify all connected guests that the game is ending
+            game.guests.forEach((guestId, guestWs) => {
+              if (guestWs.readyState === WebSocket.OPEN) {
+                guestWs.send(
+                  JSON.stringify({
+                    type: "game-ended",
+                    message: "Host has left the game",
+                  })
+                );
+              }
+            });
+
+            // Remove the game
+            games.delete(gameCode);
+          }
+
+          ws.send(
+            JSON.stringify({
+              type: "left",
+            })
+          );
+        } else if (gameCode) {
+          // Guest leaving - remove from game
+          const game = games.get(gameCode);
+          if (game && game.guests.has(ws)) {
+            const guestId = game.guests.get(ws);
+            const guest = game.allGuests.get(guestId);
+
+            if (guest) {
+              // Remove guest token
+              if (guest.token) {
+                guestTokens.delete(guest.token);
+              }
+
+              // Remove guest from active connections
+              game.guests.delete(ws);
+
+              // Remove guest from allGuests
+              game.allGuests.delete(guestId);
+
+              // Notify host
+              if (game.host && game.host.readyState === WebSocket.OPEN) {
+                game.host.send(
+                  JSON.stringify({
+                    type: "guest-left",
+                    guest: {
+                      name: guest.name,
+                      id: guestId,
+                    },
+                    totalGuests: game.allGuests.size,
+                    allGuests: Array.from(game.allGuests.values()).map((g) => ({
+                      name: g.name,
+                      id: g.id,
+                      connected: g.connected,
+                      hasAnswered: g.hasAnswered,
+                    })),
+                  })
+                );
+              }
+            }
+          }
+
+          ws.send(
+            JSON.stringify({
+              type: "left",
+            })
+          );
+        }
+      } else if (data.type === "host-remove-guest") {
+        // Host wants to remove a guest
+        const game = games.get(gameCode);
+        if (game && isHost && game.host === ws) {
+          const guestIdToRemove = data.guestId;
+          const guest = game.allGuests.get(guestIdToRemove);
+
+          if (guest) {
+            // Remove guest token
+            if (guest.token) {
+              guestTokens.delete(guest.token);
+            }
+
+            // Remove from active connections if connected
+            for (const [guestWs, guestId] of game.guests.entries()) {
+              if (guestId === guestIdToRemove) {
+                game.guests.delete(guestWs);
+                // Notify the guest if still connected
+                if (guestWs.readyState === WebSocket.OPEN) {
+                  guestWs.send(
+                    JSON.stringify({
+                      type: "removed-from-game",
+                      message: "You have been removed from the game",
+                    })
+                  );
+                }
+                break;
+              }
+            }
+
+            // Remove from allGuests
+            game.allGuests.delete(guestIdToRemove);
+
+            // Remove any responses from this guest
+            game.responses = game.responses.filter(
+              (response) => response.guestId !== guestIdToRemove
+            );
+            game.shuffledResponses = game.shuffledResponses.filter(
+              (response) => response.guestId !== guestIdToRemove
+            );
+
+            // Notify host
+            ws.send(
+              JSON.stringify({
+                type: "guest-removed",
+                guestId: guestIdToRemove,
+                totalGuests: game.allGuests.size,
+                allGuests: Array.from(game.allGuests.values()).map((g) => ({
+                  name: g.name,
+                  id: g.id,
+                  connected: g.connected,
+                  hasAnswered: g.hasAnswered,
+                })),
+              })
+            );
+          }
         }
       }
     } catch (error) {

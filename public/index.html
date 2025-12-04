@@ -101,7 +101,7 @@
                 <ul id="guests-list"></ul>
             </div>
 
-            <div class="question-section">
+            <div id="question-section" class="question-section">
                 <h3>Ask a Question</h3>
                 <textarea
                     id="host-question-input"
@@ -143,6 +143,7 @@
                 <div id="response-counter" class="response-counter"></div>
                 <div class="guessing-controls">
                     <button id="next-response-btn" class="btn btn-primary hidden">Next Response</button>
+                    <button id="skip-response-btn" class="btn btn-secondary hidden">Next (Skip)</button>
                     <button id="new-question-btn" class="btn btn-secondary hidden">New Question</button>
                 </div>
             </div>
@@ -164,6 +165,7 @@
             <div class="fullscreen-controls">
                 <button id="fullscreen-reveal-btn" class="btn btn-secondary btn-large hidden">Reveal</button>
                 <button id="fullscreen-next-btn" class="btn btn-primary btn-large hidden">Next</button>
+                <button id="fullscreen-skip-btn" class="btn btn-secondary btn-large hidden">Next (Skip)</button>
                 <button id="fullscreen-new-question-btn" class="btn btn-secondary btn-large hidden">New Question</button>
                 <button id="fullscreen-back-btn" class="btn btn-secondary btn-large">Back</button>
             </div>
@@ -171,6 +173,9 @@
     </div>
         </div>
     </div>
+
+    <!-- Leave Button (shown on relevant pages) -->
+    <button id="leave-btn" class="leave-btn hidden">Leave</button>
 
     <script src="app.js"></script>
 </body>

@@ -33,6 +33,28 @@ function showPage(pageId) {
     }
   }
   currentPage = pageId;
+
+  // Show/hide leave button based on page
+  const leaveBtn = document.getElementById("leave-btn");
+  if (leaveBtn) {
+    if (
+      pageId === "host-page" ||
+      pageId === "guest-page" ||
+      pageId === "guest-name-page"
+    ) {
+      leaveBtn.classList.remove("hidden");
+    } else {
+      leaveBtn.classList.add("hidden");
+    }
+  }
+
+  // Clear game code input when showing landing page
+  if (pageId === "landing-page") {
+    const gameCodeInput = document.getElementById("game-code-input");
+    if (gameCodeInput) {
+      gameCodeInput.value = "";
+    }
+  }
 }
 
 // Error display
@@ -111,10 +133,15 @@ function handleWebSocketMessage(data) {
       gameCode = data.gameCode;
       isHost = true;
       hostToken = data.token;
-      localStorage.setItem("hostGameCode", gameCode);
+
+      // Always save token to localStorage (even if URL is lost, token persists)
       if (hostToken) {
         localStorage.setItem("hostToken", hostToken);
-        // Update URL with token
+      }
+      localStorage.setItem("hostGameCode", gameCode);
+
+      // Update URL with token
+      if (hostToken) {
         const url = new URL(window.location);
         url.searchParams.set("hostToken", hostToken);
         url.searchParams.set("gameCode", gameCode);
@@ -149,9 +176,13 @@ function handleWebSocketMessage(data) {
       gameCode = data.gameCode;
       guestId = data.guestId;
       guestToken = data.token;
+
+      // Always save token to localStorage (even if URL is lost, token persists)
+      if (guestToken) {
+        localStorage.setItem("guestToken", guestToken);
+      }
       localStorage.setItem("guestGameCode", gameCode);
       localStorage.setItem("guestId", guestId);
-      localStorage.setItem("guestToken", guestToken);
 
       // Update URL with token
       if (guestToken) {
@@ -190,6 +221,24 @@ function handleWebSocketMessage(data) {
       break;
 
     case "question":
+      // Check if guest has already answered this question
+      if (data.hasAnswered) {
+        // Guest has already answered - show waiting screen
+        document
+          .getElementById("guest-question-section")
+          .classList.add("hidden");
+        document.getElementById("guest-answer-section").classList.add("hidden");
+        document.getElementById("guest-answer-status").textContent = "";
+
+        const waitingStatusEl = document.getElementById("guest-status");
+        waitingStatusEl.textContent = "Answer submitted! Sit back and wait for the game to start.";
+        waitingStatusEl.style.color = "#27ae60";
+        waitingStatusEl.style.fontSize = "1.8em";
+        currentQuestionId = data.questionId;
+        break;
+      }
+
+      // Guest hasn't answered yet - show question and input
       currentQuestionId = data.questionId;
       document.getElementById("guest-question-text").textContent =
         data.question;
@@ -225,10 +274,10 @@ function handleWebSocketMessage(data) {
       }
 
       // Reset status styling
-      const guestStatus = document.getElementById("guest-status");
-      guestStatus.style.color = "";
-      guestStatus.style.fontSize = "";
-      guestStatus.textContent = "Answer the question:";
+      const questionStatusEl = document.getElementById("guest-status");
+      questionStatusEl.style.color = "";
+      questionStatusEl.style.fontSize = "";
+      questionStatusEl.textContent = "Answer the question:";
 
       document
         .getElementById("guest-question-section")
@@ -239,10 +288,16 @@ function handleWebSocketMessage(data) {
       break;
 
     case "answer-received":
-      document.getElementById("guest-answer-status").textContent =
-        "Answer submitted! Waiting for others...";
-      document.getElementById("guest-answer-status").style.color = "#27ae60";
-      document.getElementById("submit-answer-btn").disabled = true;
+      // Hide question and input sections, show waiting screen
+      document.getElementById("guest-question-section").classList.add("hidden");
+      document.getElementById("guest-answer-section").classList.add("hidden");
+      document.getElementById("guest-answer-status").textContent = "";
+
+      // Update status to show waiting message
+      const guestStatus = document.getElementById("guest-status");
+      guestStatus.textContent = "Answer submitted! Sit back and wait for the game to start.";
+      guestStatus.style.color = "#27ae60";
+      guestStatus.style.fontSize = "1.8em";
       break;
 
     case "answer-error":
@@ -266,6 +321,18 @@ function handleWebSocketMessage(data) {
       }
       break;
 
+    case "guest-removed":
+      // Guest was removed by host
+      const removedItem = document.getElementById(`guest-${data.guestId}`);
+      if (removedItem) {
+        removedItem.remove();
+      }
+      updateGuestCount(data.totalGuests);
+      if (data.allGuests) {
+        updateAllGuestsList(data.allGuests);
+      }
+      break;
+
     case "guest-name-updated":
       updateGuestNameInList(data.guest);
       if (data.allGuests) {
@@ -274,6 +341,8 @@ function handleWebSocketMessage(data) {
       break;
 
     case "question-sent":
+      // Hide question input section, show responses section
+      document.getElementById("question-section").classList.add("hidden");
       document
         .getElementById("host-responses-section")
         .classList.remove("hidden");
@@ -281,13 +350,25 @@ function handleWebSocketMessage(data) {
       document.getElementById("responses-status").textContent =
         "Waiting for responses...";
       document.getElementById("start-guessing-btn").classList.add("hidden");
+      // Show "New Question" button to allow cancelling/starting new question
+      document.getElementById("new-question-from-responses-btn").classList.remove("hidden");
       // Reset all guest response statuses
       guestResponseStatus.clear();
       updateGuestResponseStatuses();
       break;
 
     case "guest-answered":
-      guestResponseStatus.set(data.guest.id, true);
+      // Handle both single guest answer and bulk update (on reconnection)
+      if (data.guest && data.guest.id) {
+        // Single guest answered
+        guestResponseStatus.set(data.guest.id, true);
+      } else if (data.answeredGuestIds && Array.isArray(data.answeredGuestIds)) {
+        // Bulk update on reconnection - populate map with all answered guests
+        data.answeredGuestIds.forEach(guestId => {
+          guestResponseStatus.set(guestId, true);
+        });
+      }
+
       updateGuestResponseStatuses();
       updateResponseCount(data.totalResponses, data.totalGuests);
       if (data.allGuests) {
@@ -304,9 +385,10 @@ function handleWebSocketMessage(data) {
             "All connected guests have answered!";
           document.getElementById("responses-status").style.color = "#27ae60";
         } else {
+          // Use totalGuests for the count to match the (X/Y) display
           document.getElementById(
             "responses-status"
-          ).textContent = `${data.totalResponses} of ${connectedCount} connected guests have answered. You can start guessing now.`;
+          ).textContent = `${data.totalResponses} of ${data.totalGuests} guests have answered. You can start guessing now.`;
           document.getElementById("responses-status").style.color = "#f39c12";
         }
       }
@@ -314,8 +396,10 @@ function handleWebSocketMessage(data) {
 
     case "waiting-for-question":
       // Host started a new question - show waiting screen
-      document.getElementById("guest-status").textContent =
-        "Waiting for question...";
+      const waitingQuestionStatusEl = document.getElementById("guest-status");
+      waitingQuestionStatusEl.textContent = "Waiting for question...";
+      waitingQuestionStatusEl.style.color = "";
+      waitingQuestionStatusEl.style.fontSize = "";
       document.getElementById("guest-question-section").classList.add("hidden");
       document.getElementById("guest-answer-section").classList.add("hidden");
       document.getElementById("guest-answer-status").textContent = "";
@@ -360,14 +444,17 @@ function handleWebSocketMessage(data) {
     case "all-responses-shown":
       if (isHost) {
         document.getElementById("next-response-btn").classList.add("hidden");
+        document.getElementById("skip-response-btn").classList.add("hidden");
         document.getElementById("new-question-btn").classList.remove("hidden");
         const fullscreenNextBtn = document.getElementById(
           "fullscreen-next-btn"
         );
+        const fullscreenSkipBtn = document.getElementById("fullscreen-skip-btn");
         const fullscreenNewQuestionBtn = document.getElementById(
           "fullscreen-new-question-btn"
         );
         if (fullscreenNextBtn) fullscreenNextBtn.classList.add("hidden");
+        if (fullscreenSkipBtn) fullscreenSkipBtn.classList.add("hidden");
         if (fullscreenNewQuestionBtn)
           fullscreenNewQuestionBtn.classList.remove("hidden");
       }
@@ -379,6 +466,8 @@ function handleWebSocketMessage(data) {
         document
           .getElementById("host-responses-section")
           .classList.add("hidden");
+        // Show question input section again
+        document.getElementById("question-section").classList.remove("hidden");
         document.getElementById("fullscreen-guessing").classList.add("hidden");
         showPage("host-page");
       }
@@ -388,6 +477,23 @@ function handleWebSocketMessage(data) {
       // Hot reload: reload the page when files change
       console.log("Reloading page due to file change...");
       window.location.reload();
+      break;
+
+    case "left":
+      // Successfully left the game
+      redirectToLanding();
+      break;
+
+    case "game-ended":
+      // Game ended by host
+      showError("landing-error", data.message || "The game has ended");
+      redirectToLanding();
+      break;
+
+    case "removed-from-game":
+      // Guest was removed from game by host
+      alert(data.message || "You have been removed from the game");
+      redirectToLanding();
       break;
   }
 }
@@ -427,19 +533,35 @@ function updateGuestsList(guest, totalGuests) {
     li.id = `guest-${guest.id}`;
     li.className = "guest-item";
     const connectionStatusClass = isConnected ? "connected" : "disconnected";
-    const connectionSymbol = isConnected ? "●" : "○";
     if (!isConnected) {
       li.classList.add("disconnected");
     }
     li.innerHTML = `
             <span class="guest-name">${displayName}</span>
-            <span class="guest-id">${guest.id}</span>
-            <span class="guest-connection-status ${connectionStatusClass}" title="${
-      isConnected ? "Connected" : "Disconnected"
-    }">${connectionSymbol}</span>
             <span class="guest-status-indicator"></span>
+            <span class="guest-connection-status ${connectionStatusClass}" data-guest-id="${guest.id}" title="${
+      isConnected ? "Connected" : "Click to remove"
+    }">${isConnected ? "●" : "✕"}</span>
         `;
     list.appendChild(li);
+
+    // Add event listener for remove button if disconnected
+    if (!isConnected) {
+      const connectionStatus = li.querySelector(".guest-connection-status");
+      if (connectionStatus) {
+        connectionStatus.style.cursor = "pointer";
+        connectionStatus.addEventListener("click", () => {
+          if (confirm(`Remove ${displayName} from the game?`)) {
+            ws.send(
+              JSON.stringify({
+                type: "host-remove-guest",
+                guestId: guest.id,
+              })
+            );
+          }
+        });
+      }
+    }
   }
 
   updateGuestCount(totalGuests);
@@ -452,17 +574,42 @@ function updateAllGuestsList(allGuests) {
     const item = document.getElementById(`guest-${guest.id}`);
     if (item) {
       const connectionStatus = item.querySelector(".guest-connection-status");
+      const isConnected =
+        guest.connected !== false && guest.connected !== undefined;
+
       if (connectionStatus) {
-        if (guest.connected) {
+        if (isConnected) {
           connectionStatus.textContent = "●";
           connectionStatus.className = "guest-connection-status connected";
           connectionStatus.title = "Connected";
+          connectionStatus.style.cursor = "default";
           item.classList.remove("disconnected");
+
+          // Remove click listener if it exists
+          const newConnectionStatus = connectionStatus.cloneNode(true);
+          connectionStatus.parentNode.replaceChild(newConnectionStatus, connectionStatus);
         } else {
-          connectionStatus.textContent = "○";
+          connectionStatus.textContent = "✕";
           connectionStatus.className = "guest-connection-status disconnected";
-          connectionStatus.title = "Disconnected";
+          connectionStatus.title = "Click to remove";
+          connectionStatus.style.cursor = "pointer";
           item.classList.add("disconnected");
+
+          // Add click listener if it doesn't exist
+          const guestId = connectionStatus.getAttribute("data-guest-id");
+          if (guestId) {
+            const displayName = guest.name || "Guest";
+            connectionStatus.onclick = () => {
+              if (confirm(`Remove ${displayName} from the game?`)) {
+                ws.send(
+                  JSON.stringify({
+                    type: "host-remove-guest",
+                    guestId: guestId,
+                  })
+                );
+              }
+            };
+          }
         }
       }
     } else {
@@ -476,17 +623,47 @@ function updateGuestInList(guest) {
   const item = document.getElementById(`guest-${guest.id}`);
   if (item) {
     const connectionStatus = item.querySelector(".guest-connection-status");
+    const isConnected =
+      guest.connected !== false && guest.connected !== undefined;
+
     if (connectionStatus) {
-      if (guest.connected) {
+      if (isConnected) {
         connectionStatus.textContent = "●";
         connectionStatus.className = "guest-connection-status connected";
         connectionStatus.title = "Connected";
         item.classList.remove("disconnected");
+
+        // Remove remove button if guest is now connected
+        const removeBtn = item.querySelector(".guest-remove-btn");
+        if (removeBtn) {
+          removeBtn.remove();
+        }
       } else {
         connectionStatus.textContent = "○";
         connectionStatus.className = "guest-connection-status disconnected";
         connectionStatus.title = "Disconnected";
         item.classList.add("disconnected");
+
+        // Add remove button if it doesn't exist
+        if (!item.querySelector(".guest-remove-btn")) {
+          const removeBtn = document.createElement("button");
+          removeBtn.className = "guest-remove-btn";
+          removeBtn.setAttribute("data-guest-id", guest.id);
+          removeBtn.title = "Remove from game";
+          removeBtn.textContent = "✕";
+          const displayName = guest.name || "Guest";
+          removeBtn.addEventListener("click", () => {
+            if (confirm(`Remove ${displayName} from the game?`)) {
+              ws.send(
+                JSON.stringify({
+                  type: "host-remove-guest",
+                  guestId: guest.id,
+                })
+              );
+            }
+          });
+          item.appendChild(removeBtn);
+        }
       }
     }
   }
@@ -520,14 +697,14 @@ function updateGuestResponseStatuses() {
       guestItem.classList.add("answered");
       guestItem.classList.remove("pending");
       if (statusIndicator) {
-        statusIndicator.textContent = "✓";
+        statusIndicator.textContent = "";
         statusIndicator.className = "guest-status-indicator answered";
       }
     } else if (currentQuestionId) {
       guestItem.classList.add("pending");
       guestItem.classList.remove("answered");
       if (statusIndicator) {
-        statusIndicator.textContent = "○";
+        statusIndicator.textContent = "";
         statusIndicator.className = "guest-status-indicator pending";
       }
     } else {
@@ -582,6 +759,7 @@ function showResponse(response, index, total) {
   }
 
   document.getElementById("next-response-btn").classList.add("hidden");
+  document.getElementById("skip-response-btn").classList.remove("hidden");
   document.getElementById("new-question-btn").classList.add("hidden");
 }
 
@@ -644,8 +822,10 @@ function showFullscreenGuessing(response, question, index, total) {
 
   // Button visibility - single row
   // Show reveal button initially (author not yet revealed)
+  const skipBtn = document.getElementById("fullscreen-skip-btn");
   if (revealBtn) revealBtn.classList.remove("hidden");
   if (nextBtn) nextBtn.classList.add("hidden");
+  if (skipBtn) skipBtn.classList.remove("hidden");
   if (newQuestionBtn) newQuestionBtn.classList.add("hidden");
   if (backBtn) backBtn.classList.remove("hidden");
 }
@@ -670,6 +850,7 @@ function revealFullscreenAnswer(guestName) {
   const authorEl = document.getElementById("fullscreen-response-author");
   const revealBtn = document.getElementById("fullscreen-reveal-btn");
   const nextBtn = document.getElementById("fullscreen-next-btn");
+  const skipBtn = document.getElementById("fullscreen-skip-btn");
 
   // Show author name
   if (authorEl) {
@@ -677,8 +858,9 @@ function revealFullscreenAnswer(guestName) {
     authorEl.style.display = "block";
   }
 
-  // Hide reveal button, show next button
+  // Hide reveal button and skip button, show next button
   if (revealBtn) revealBtn.classList.add("hidden");
+  if (skipBtn) skipBtn.classList.add("hidden");
   if (nextBtn) nextBtn.classList.remove("hidden");
 }
 
@@ -830,6 +1012,10 @@ document.addEventListener("DOMContentLoaded", () => {
     ws.send(JSON.stringify({ type: "host-next-response" }));
   });
 
+  document.getElementById("skip-response-btn").addEventListener("click", () => {
+    ws.send(JSON.stringify({ type: "host-skip-response" }));
+  });
+
   document.getElementById("new-question-btn").addEventListener("click", () => {
     ws.send(JSON.stringify({ type: "host-new-question" }));
   });
@@ -854,6 +1040,12 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
   document
+    .getElementById("fullscreen-skip-btn")
+    .addEventListener("click", () => {
+      ws.send(JSON.stringify({ type: "host-skip-response" }));
+    });
+
+  document
     .getElementById("fullscreen-new-question-btn")
     .addEventListener("click", () => {
       ws.send(JSON.stringify({ type: "host-new-question" }));
@@ -863,8 +1055,21 @@ document.addEventListener("DOMContentLoaded", () => {
     .getElementById("fullscreen-back-btn")
     .addEventListener("click", () => {
       document.getElementById("fullscreen-guessing").classList.add("hidden");
+      document.getElementById("guessing-section").classList.add("hidden");
       showPage("host-page");
     });
+
+  // Leave button
+  document.getElementById("leave-btn").addEventListener("click", () => {
+    if (confirm("Are you sure you want to leave the game?")) {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "leave" }));
+      } else {
+        // If WebSocket is not open, just redirect
+        redirectToLanding();
+      }
+    }
+  });
 
   // Initialize WebSocket connection
   connectWebSocket();
@@ -877,27 +1082,29 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Check if this is a host reconnection
   if (urlHostToken && urlGameCode) {
-    // Host token in URL, restore from URL
+    // Host token in URL - wait for WebSocket and verify game exists before reconnecting
+    // Don't auto-create, just wait for user to click host button or verify on connection
     localStorage.setItem("hostToken", urlHostToken);
     localStorage.setItem("hostGameCode", urlGameCode);
     hostToken = urlHostToken;
     gameCode = urlGameCode;
     isHost = true;
 
-    // Auto-reconnect as host if WebSocket is ready
+    // Auto-reconnect as host if WebSocket is ready (will fail gracefully if game doesn't exist)
     setTimeout(() => {
       if (ws && ws.readyState === WebSocket.OPEN) {
         createOrReconnectHost();
       }
     }, 500);
   } else if (urlToken && urlGameCode) {
-    // Guest token in URL, restore from URL
+    // Guest token in URL - wait for WebSocket and verify game exists before joining
+    // Don't auto-create, just wait for user to enter code or verify on connection
     localStorage.setItem("guestToken", urlToken);
     localStorage.setItem("guestGameCode", urlGameCode);
     guestToken = urlToken;
     gameCode = urlGameCode;
 
-    // Auto-join if WebSocket is ready
+    // Auto-join if WebSocket is ready (will fail gracefully if game doesn't exist)
     setTimeout(() => {
       if (ws && ws.readyState === WebSocket.OPEN) {
         joinGame(urlGameCode);
@@ -965,8 +1172,23 @@ function updateGuestConnectionStatus(connected) {
 }
 
 function joinGame(code) {
-  const savedToken = localStorage.getItem("guestToken");
+  // Check URL first for token, but always fall back to localStorage
+  // This ensures tokens persist even if URL is lost
+  const urlParams = new URLSearchParams(window.location.search);
+  const urlToken = urlParams.get("token");
+
+  // Use token from URL if available, otherwise use localStorage
+  // This way if URL is lost, user can still reconnect with same identity
+  const savedToken = urlToken || localStorage.getItem("guestToken");
   const savedGuestId = localStorage.getItem("guestId");
+
+  // If we have a token in localStorage but not in URL, update the URL
+  if (!urlToken && savedToken) {
+    const url = new URL(window.location);
+    url.searchParams.set("token", savedToken);
+    url.searchParams.set("gameCode", code);
+    window.history.replaceState({}, "", url);
+  }
 
   if (!ws || ws.readyState !== WebSocket.OPEN) {
     connectWebSocket();
@@ -1017,8 +1239,14 @@ function redirectToLanding() {
 }
 
 function reconnectAsGuest() {
-  const savedToken = localStorage.getItem("guestToken");
-  const savedGameCode = localStorage.getItem("guestGameCode");
+  // Check URL first for token (source of truth)
+  const urlParams = new URLSearchParams(window.location.search);
+  const urlToken = urlParams.get("token");
+  const urlGameCode = urlParams.get("gameCode");
+
+  // Fall back to localStorage if URL doesn't have token
+  const savedToken = urlToken || localStorage.getItem("guestToken");
+  const savedGameCode = urlGameCode || localStorage.getItem("guestGameCode");
   const savedGuestId = localStorage.getItem("guestId");
   const savedName = localStorage.getItem("guestName");
 
